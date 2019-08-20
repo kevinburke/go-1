@@ -162,6 +162,9 @@ func addAccountsToStateVerifier(verifier *verify.StateVerifier, q *history.Q) er
 		return errors.Wrap(err, "rows.Err returned error")
 	}
 
+	// Sort signers
+	account.Signers = xdr.SortSignersByKey(account.Signers)
+
 	// Add last created in a loop account
 	entry := xdr.LedgerEntry{
 		Data: xdr.LedgerEntryData{
