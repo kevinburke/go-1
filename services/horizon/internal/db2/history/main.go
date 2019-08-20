@@ -302,13 +302,15 @@ type QSigners interface {
 	GetLastLedgerExpIngest() (uint32, error)
 	UpdateLastLedgerExpIngest(ledgerSequence uint32) error
 	AccountsForSigner(signer string, page db2.PageQuery) ([]AccountSigner, error)
-	CreateAccountSigner(account, signer string, weight int32) error
+	InsertAccountSigner(account, signer string, weight int32) error
+	UpsertAccountSigner(account, signer string, weight int32) error
 	RemoveAccountSigner(account, signer string) error
 }
 
 // QOffers defines offer related queries.
 type QOffers interface {
 	GetAllOffers() ([]Offer, error)
+	InsertOffer(offer xdr.OfferEntry) error
 	UpsertOffer(offer xdr.OfferEntry) error
 	RemoveOffer(offerID xdr.Int64) error
 }

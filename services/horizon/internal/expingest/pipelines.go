@@ -4,15 +4,14 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/stellar/go/exp/ingest"
 	"github.com/stellar/go/exp/ingest/pipeline"
 	"github.com/stellar/go/exp/ingest/processors"
 	"github.com/stellar/go/exp/orderbook"
 	supportPipeline "github.com/stellar/go/exp/support/pipeline"
 	"github.com/stellar/go/services/horizon/internal/db2/history"
 	horizonProcessors "github.com/stellar/go/services/horizon/internal/expingest/processors"
-	"github.com/stellar/go/support/db"
 	"github.com/stellar/go/support/errors"
+	"github.com/stellar/go/support/historyarchive"
 	ilog "github.com/stellar/go/support/log"
 	"github.com/stellar/go/xdr"
 )
@@ -100,11 +99,8 @@ func buildLedgerPipeline(historyQ *history.Q, graph *orderbook.OrderBookGraph) *
 	return ledgerPipeline
 }
 
-func addPipelineHooks(
+func (s *System) addPipelineHooks(
 	p supportPipeline.PipelineInterface,
-	historySession *db.Session,
-	ingestSession ingest.Session,
-	graph *orderbook.OrderBookGraph,
 ) {
 	var pipelineType string
 	switch p.(type) {
@@ -116,15 +112,13 @@ func addPipelineHooks(
 		panic(fmt.Sprintf("Unknown pipeline type %T", p))
 	}
 
-	historyQ := &history.Q{historySession}
-
 	p.AddPreProcessingHook(func(ctx context.Context) (context.Context, error) {
 		// Start a transaction only if not in a transaction already.
 		// The only case this can happen is during the first run when
 		// a transaction is started to get the latest ledger `FOR UPDATE`
 		// in `System.Run()`.
-		if tx := historySession.GetTx(); tx == nil {
-			err := historySession.Begin()
+		if tx := s.historySession.GetTx(); tx == nil {
+			err := s.historySession.Begin()
 			if err != nil {
 				return ctx, errors.Wrap(err, "Error starting a transaction")
 			}
@@ -132,7 +126,7 @@ func addPipelineHooks(
 
 		// We need to get this value `FOR UPDATE` so all other instances
 		// are blocked.
-		lastIngestedLedger, err := historyQ.GetLastLedgerExpIngest()
+		lastIngestedLedger, err := s.historyQ.GetLastLedgerExpIngest()
 		if err != nil {
 			return ctx, errors.Wrap(err, "Error getting last ledger")
 		}
@@ -157,7 +151,7 @@ func addPipelineHooks(
 		// If we are not going to update a DB release a lock by rolling back a
 		// transaction.
 		if !updateDatabase {
-			historySession.Rollback()
+			s.historySession.Rollback()
 		}
 
 		log.WithFields(ilog.F{
@@ -170,8 +164,8 @@ func addPipelineHooks(
 	})
 
 	p.AddPostProcessingHook(func(ctx context.Context, err error) error {
-		defer historySession.Rollback()
-		defer graph.Discard()
+		defer s.historySession.Rollback()
+		defer s.graph.Discard()
 
 		ledgerSeq := pipeline.GetLedgerSequenceFromContext(ctx)
 
@@ -186,14 +180,14 @@ func addPipelineHooks(
 			return err
 		}
 
-		if tx := historySession.GetTx(); tx != nil {
+		if tx := s.historySession.GetTx(); tx != nil {
 			// If we're in a transaction we're updating database with new data.
 			// We get lastIngestedLedger from a DB here to do an extra check
 			// if the current node should really be updating a DB.
 			// This is "just in case" if lastIngestedLedger is not selected
 			// `FOR UPDATE` due to a bug or accident. In such case we error and
 			// rollback.
-			lastIngestedLedger, err := historyQ.GetLastLedgerExpIngest()
+			lastIngestedLedger, err := s.historyQ.GetLastLedgerExpIngest()
 			if err != nil {
 				return errors.Wrap(err, "Error getting last ledger")
 			}
@@ -202,21 +196,31 @@ func addPipelineHooks(
 				return errors.New("The local latest sequence is not equal to global sequence + 1")
 			}
 
-			if err := historyQ.UpdateLastLedgerExpIngest(ledgerSeq); err != nil {
+			if err := s.historyQ.UpdateLastLedgerExpIngest(ledgerSeq); err != nil {
 				return errors.Wrap(err, "Error updating last ingested ledger")
 			}
 
-			if err := historyQ.UpdateExpIngestVersion(CurrentVersion); err != nil {
+			if err := s.historyQ.UpdateExpIngestVersion(CurrentVersion); err != nil {
 				return errors.Wrap(err, "Error updating expingest version")
 			}
 
-			if err := historySession.Commit(); err != nil {
+			if err := s.historySession.Commit(); err != nil {
 				return errors.Wrap(err, "Error commiting db transaction")
 			}
 		}
 
-		if err := graph.Apply(); err != nil {
+		if err := s.graph.Apply(); err != nil {
 			return errors.Wrap(err, "Error applying order book changes")
+		}
+
+		if pipelineType == "ledger_pipeline" && historyarchive.IsCheckpoint(ledgerSeq) {
+			// Run verification routine
+			go func() {
+				err := s.verifyState()
+				if err != nil {
+					log.WithField("err", err).Error("State verification errored")
+				}
+			}()
 		}
 
 		log.WithFields(ilog.F{"ledger": ledgerSeq, "type": pipelineType}).Info("Processed ledger")

@@ -1,10 +1,27 @@
 package history
 
 import (
+	"database/sql"
+
 	sq "github.com/Masterminds/squirrel"
 	"github.com/stellar/go/services/horizon/internal/db2"
 	"github.com/stellar/go/support/errors"
 )
+
+// StreamAccounts streams accounts from a DB. This currently only
+// streams signers. Used in state verification code.
+func (q *Q) StreamAccounts() (*sql.Rows, error) {
+	// TODO index on `account`
+	return sq.Select(
+		"accounts_signers.account",
+		"accounts_signers.signer",
+		"accounts_signers.weight",
+	).
+		From("accounts_signers").
+		OrderBy("accounts_signers.account ASC").
+		RunWith(q.Session.GetTx().Tx).
+		Query()
+}
 
 // AccountsForSigner returns a list of `AccountSigner` rows for a given signer
 func (q *Q) AccountsForSigner(signer string, page db2.PageQuery) ([]AccountSigner, error) {
@@ -22,8 +39,17 @@ func (q *Q) AccountsForSigner(signer string, page db2.PageQuery) ([]AccountSigne
 	return results, nil
 }
 
-// CreateAccountSigner creates a row in the accounts_signers table
-func (q *Q) CreateAccountSigner(account, signer string, weight int32) error {
+// InsertAccountSigner creates a row in the accounts_signers table
+func (q *Q) InsertAccountSigner(account, signer string, weight int32) error {
+	sql := sq.Insert("accounts_signers").
+		Columns("account", "signer", "weight").
+		Values(account, signer, weight)
+	_, err := q.Exec(sql)
+	return err
+}
+
+// UpsertAccountSigner creates a row in the accounts_signers table
+func (q *Q) UpsertAccountSigner(account, signer string, weight int32) error {
 	sql := sq.Insert("accounts_signers").
 		Columns("account", "signer", "weight").
 		Values(account, signer, weight).

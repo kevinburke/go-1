@@ -5,7 +5,7 @@ import (
 
 	"github.com/stellar/go/clients/stellarcore"
 	"github.com/stellar/go/exp/ingest"
-	"github.com/stellar/go/exp/ingest/io"
+	// "github.com/stellar/go/exp/ingest/io"
 	"github.com/stellar/go/exp/ingest/ledgerbackend"
 	"github.com/stellar/go/exp/orderbook"
 	"github.com/stellar/go/support/errors"

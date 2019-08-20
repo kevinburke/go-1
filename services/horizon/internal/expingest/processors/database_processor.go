@@ -40,7 +40,7 @@ func (p *DatabaseProcessor) ProcessState(ctx context.Context, store *pipeline.St
 			accountEntry := entryChange.MustState().Data.MustAccount()
 			account := accountEntry.AccountId.Address()
 			for signer, weight := range accountEntry.SignerSummary() {
-				err = p.HistoryQ.CreateAccountSigner(
+				err = p.HistoryQ.InsertAccountSigner(
 					account,
 					signer,
 					weight,
@@ -56,7 +56,7 @@ func (p *DatabaseProcessor) ProcessState(ctx context.Context, store *pipeline.St
 			}
 
 			offer := entryChange.MustState().Data.MustOffer()
-			if err := p.OffersQ.UpsertOffer(offer); err != nil {
+			if err := p.OffersQ.InsertOffer(offer); err != nil {
 				return errors.Wrap(err, "Error inserting offers")
 			}
 		default:
@@ -143,7 +143,7 @@ func (p *DatabaseProcessor) processLedgerAccountsForSigner(transaction io.Ledger
 		if change.Post != nil {
 			postAccountEntry := change.Post.MustAccount()
 			for signer, weight := range postAccountEntry.SignerSummary() {
-				err := p.HistoryQ.CreateAccountSigner(postAccountEntry.AccountId.Address(), signer, weight)
+				err := p.HistoryQ.UpsertAccountSigner(postAccountEntry.AccountId.Address(), signer, weight)
 				if err != nil {
 					return errors.Wrap(err, "Error inserting a signer")
 				}

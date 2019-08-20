@@ -44,9 +44,14 @@ type Config struct {
 }
 
 type System struct {
-	session  *ingest.LiveSession
-	historyQ *history.Q
-	graph    *orderbook.OrderBookGraph
+	session        *ingest.LiveSession
+	historySession *db.Session
+	historyQ       *history.Q
+	graph          *orderbook.OrderBookGraph
+
+	// stateVerificationRunning is true when verification routine is currently
+	// running.
+	stateVerificationRunning bool
 }
 
 func NewSystem(config Config) (*System, error) {
@@ -79,24 +84,17 @@ func NewSystem(config Config) (*System, error) {
 		},
 	}
 
-	addPipelineHooks(
-		session.StatePipeline,
-		config.HistorySession,
-		session,
-		config.OrderBookGraph,
-	)
-	addPipelineHooks(
-		session.LedgerPipeline,
-		config.HistorySession,
-		session,
-		config.OrderBookGraph,
-	)
+	system := &System{
+		session:        session,
+		historySession: config.HistorySession,
+		historyQ:       historyQ,
+		graph:          config.OrderBookGraph,
+	}
 
-	return &System{
-		session:  session,
-		historyQ: historyQ,
-		graph:    config.OrderBookGraph,
-	}, nil
+	system.addPipelineHooks(session.StatePipeline)
+	system.addPipelineHooks(session.LedgerPipeline)
+
+	return system, nil
 }
 
 // Run starts ingestion system. Ingestion system supports distributed ingestion
